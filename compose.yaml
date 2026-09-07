@@ -1,0 +1,183 @@
+name: metricops
+
+x-api-environment: &api_environment
+  NODE_ENV: production
+  HOST: 0.0.0.0
+  PORT: 8080
+  DATABASE_URL_FILE: /run/secrets/database_url
+  DATABASE_SSL_MODE: verify-full
+  DATABASE_CA_FILE: /run/secrets/database_ca
+  OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER}
+  OIDC_AUDIENCE: ${OIDC_AUDIENCE:-metricops-api}
+  OIDC_JWKS_URI: ${OIDC_JWKS_URI:?set OIDC_JWKS_URI}
+  OIDC_MAX_TOKEN_AGE_SECONDS: ${OIDC_MAX_TOKEN_AGE_SECONDS:-900}
+  CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS}
+  TRUST_PROXY: "true"
+  AUDIT_HMAC_KEY_FILE: /run/secrets/audit_hmac_key
+  SECRET_DIRECTORY: /run/secrets/connections
+  CONNECTION_ALLOWED_CIDRS: ${CONNECTION_ALLOWED_CIDRS:-}
+  CONNECTION_ALLOWED_HOSTS: ${CONNECTION_ALLOWED_HOSTS:-}
+
+services:
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: metricops
+      POSTGRES_USER: metricops_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+      - postgres_app_password
+      - postgres_worker_password
+      - postgres_server_certificate
+      - postgres_server_key
+    volumes:
+      - metricops_database:/var/lib/postgresql/data
+      - ./deploy/postgres/001-create-app-role.sh:/docker-entrypoint-initdb.d/001-create-app-role.sh:ro
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metricops_admin -d metricops"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - sh
+      - -ec
+      - >-
+        install -o postgres -g postgres -m 0600 /run/secrets/postgres_server_key /var/lib/postgresql/postgres_server.key;
+        install -o postgres -g postgres -m 0644 /run/secrets/postgres_server_certificate /var/lib/postgresql/postgres_server.crt;
+        exec docker-entrypoint.sh postgres -c ssl=on -c ssl_min_protocol_version=TLSv1.2
+        -c ssl_cert_file=/var/lib/postgresql/postgres_server.crt
+        -c ssl_key_file=/var/lib/postgresql/postgres_server.key
+
+  migrate:
+    build: .
+    image: metricops-control-plane:local
+    profiles: ["tools"]
+    command: ["node", "dist/src/database/migrate.js"]
+    secrets:
+      - migration_database_url
+      - database_ca
+      - audit_hmac_key
+    networks:
+      - database
+    depends_on:
+      database:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    environment:
+      <<: *api_environment
+      DATABASE_URL_FILE: /run/secrets/migration_database_url
+
+  api:
+    build: .
+    image: metricops-control-plane:local
+    restart: unless-stopped
+    environment:
+      <<: *api_environment
+      METRICS_BEARER_TOKEN_FILE: /run/secrets/metrics_bearer_token
+    secrets: &api_secrets
+      - database_url
+      - database_ca
+      - audit_hmac_key
+      - metrics_bearer_token
+    volumes:
+      - ./secrets/connections:/run/secrets/connections:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - database
+      - egress
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=32m
+
+  worker:
+    build: .
+    image: metricops-control-plane:local
+    command: ["node", "--enable-source-maps", "dist/src/worker.js"]
+    restart: unless-stopped
+    environment:
+      <<: *api_environment
+      DATABASE_URL_FILE: /run/secrets/worker_database_url
+      METRICS_BEARER_TOKEN_FILE: /run/secrets/metrics_bearer_token
+      WORKER_METRICS_HOST: 0.0.0.0
+      WORKER_METRICS_PORT: 9091
+    secrets:
+      - worker_database_url
+      - database_ca
+      - audit_hmac_key
+      - metrics_bearer_token
+    volumes:
+      - ./secrets/connections:/run/secrets/connections:ro
+    networks:
+      - database
+      - egress
+    expose:
+      - "9091"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9091/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      database:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=32m
+
+volumes:
+  metricops_database:
+
+networks:
+  database:
+    internal: true
+  egress:
+
+secrets:
+  postgres_password:
+    file: ./secrets/platform/postgres_password
+  postgres_app_password:
+    file: ./secrets/platform/postgres_app_password
+  postgres_worker_password:
+    file: ./secrets/platform/postgres_worker_password
+  database_url:
+    file: ./secrets/platform/database_url
+  migration_database_url:
+    file: ./secrets/platform/migration_database_url
+  worker_database_url:
+    file: ./secrets/platform/worker_database_url
+  database_ca:
+    file: ./secrets/platform/postgres_ca.crt
+  audit_hmac_key:
+    file: ./secrets/platform/audit_hmac_key
+  metrics_bearer_token:
+    file: ./secrets/platform/metrics_bearer_token
+  postgres_server_certificate:
+    file: ./secrets/platform/postgres_server.crt
+  postgres_server_key:
+    file: ./secrets/platform/postgres_server.key

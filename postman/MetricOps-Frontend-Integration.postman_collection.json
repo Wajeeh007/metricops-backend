@@ -1,0 +1,121 @@
+{
+  "info": {
+    "_postman_id": "13fb3175-6e48-4e52-b3d9-5bd2d5d1ab7e",
+    "name": "MetricOps — Frontend Integration",
+    "description": "Frontend-facing MetricOps API collection. Import an environment first, set access_token from your OIDC login, and use a fresh idempotency_key for each new logical mutation. Retry the same mutation with the same key. All authenticated routes use the tenant and permissions embedded in the token; the browser must never send customer_id as an API selector.\n\nBase URL must include /api/v1, for example https://api.staging.metricops.example/api/v1. API responses consistently contain requestId, which should be retained in frontend error reporting.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+  "variable": [
+    { "key": "api_base_url", "value": "http://127.0.0.1:8080/api/v1" },
+    { "key": "api_origin", "value": "http://127.0.0.1:8080" },
+    { "key": "access_token", "value": "" },
+    { "key": "idempotency_key", "value": "018ee90f-1f87-7db2-9d41-e3c18986a821" },
+    { "key": "connection_id", "value": "65a1607e-c424-4df3-a277-629690129b38" },
+    { "key": "resource_id", "value": "55555555-5555-4555-8555-555555555555" },
+    { "key": "job_id", "value": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" },
+    { "key": "incident_id", "value": "11111111-2222-4333-8444-555555555555" },
+    { "key": "customer_id", "value": "13f1ae6c-5151-4f8c-8616-908e62f27c71" },
+    { "key": "report_start", "value": "2026-09-01T00:00:00.000Z" },
+    { "key": "report_end", "value": "2026-09-02T00:00:00.000Z" }
+  ],
+  "item": [
+    {
+      "name": "0. Platform health",
+      "description": "Public endpoints for local development and deployment health checks. These are not dashboard analytics endpoints.",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": { "method": "GET", "auth": { "type": "noauth" }, "url": "{{api_origin}}/health/live", "description": "Expected 200: { \"status\": \"ok\" }." },
+          "response": [{ "name": "200 — live", "originalRequest": { "method": "GET", "url": "{{api_origin}}/health/live" }, "status": "OK", "code": 200, "_postman_previewlanguage": "json", "body": "{\n  \"status\": \"ok\"\n}" }]
+        },
+        {
+          "name": "Readiness",
+          "request": { "method": "GET", "auth": { "type": "noauth" }, "url": "{{api_origin}}/health/ready", "description": "Expected 200 when PostgreSQL is available; a sanitized 503 means a required dependency is unavailable." }
+        }
+      ]
+    },
+    {
+      "name": "1. Connections",
+      "description": "Requires connection:read, connection:write, or connection:validate as noted. The frontend sends only a file secret reference; credentials are provisioned server-side and never returned.",
+      "item": [
+        {
+          "name": "List connections",
+          "request": { "method": "GET", "url": "{{api_base_url}}/connections?limit=50", "description": "Permission: connection:read. Response data is scoped to the token customer." },
+          "response": [{ "name": "200 — connection list", "originalRequest": { "method": "GET", "url": "{{api_base_url}}/connections?limit=50" }, "status": "OK", "code": 200, "_postman_previewlanguage": "json", "body": "{\n  \"data\": [{\n    \"id\": \"65a1607e-c424-4df3-a277-629690129b38\",\n    \"name\": \"Production Prometheus\",\n    \"kind\": \"prometheus\",\n    \"configuration\": { \"baseUrl\": \"https://prometheus.internal.example\", \"healthPath\": \"/-/ready\" },\n    \"status\": \"healthy\",\n    \"lastValidatedAt\": \"2026-09-01T12:00:00.000Z\",\n    \"createdAt\": \"2026-09-01T11:00:00.000Z\",\n    \"updatedAt\": \"2026-09-01T12:00:00.000Z\"\n  }],\n  \"requestId\": \"13f1ae6c-5151-4f8c-8616-908e62f27c71\"\n}" }]
+        },
+        {
+          "name": "Create Prometheus connection",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{idempotency_key}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Production Prometheus\",\n  \"kind\": \"prometheus\",\n  \"configuration\": {\n    \"baseUrl\": \"https://prometheus.internal.example\",\n    \"healthPath\": \"/-/ready\"\n  },\n  \"secretRef\": \"file:customer-prometheus\"\n}" },
+            "url": "{{api_base_url}}/connections",
+            "description": "Permission: connection:write. Use the same Idempotency-Key only when retrying this exact payload. Supported kinds: postgresql, mysql, prometheus, alertmanager_webhook, aws_assume_role. See the integration guide for each secure payload and secret format."
+          },
+          "response": [{ "name": "201 — connection created", "originalRequest": { "method": "POST", "url": "{{api_base_url}}/connections" }, "status": "Created", "code": 201, "_postman_previewlanguage": "json", "body": "{\n  \"data\": {\n    \"id\": \"65a1607e-c424-4df3-a277-629690129b38\",\n    \"name\": \"Production Prometheus\",\n    \"kind\": \"prometheus\",\n    \"configuration\": { \"baseUrl\": \"https://prometheus.internal.example\", \"healthPath\": \"/-/ready\" },\n    \"status\": \"pending\",\n    \"lastValidatedAt\": null,\n    \"createdAt\": \"2026-09-01T11:00:00.000Z\",\n    \"updatedAt\": \"2026-09-01T11:00:00.000Z\"\n  },\n  \"requestId\": \"13f1ae6c-5151-4f8c-8616-908e62f27c71\"\n}" }]
+        },
+        {
+          "name": "Queue connection validation",
+          "request": { "method": "POST", "header": [{ "key": "Idempotency-Key", "value": "{{idempotency_key}}" }], "url": "{{api_base_url}}/connections/{{connection_id}}/validation-jobs", "description": "Permission: connection:validate. Expected 202 and a Location response header pointing to /jobs/{id}. Poll that route rather than blocking the UI." }
+        },
+        {
+          "name": "Queue AWS discovery",
+          "request": { "method": "POST", "header": [{ "key": "Idempotency-Key", "value": "{{idempotency_key}}" }], "url": "{{api_base_url}}/connections/{{connection_id}}/discovery-jobs", "description": "Permission: resource:discover. Valid only for aws_assume_role connections; expected 202." }
+        }
+      ]
+    },
+    {
+      "name": "2. Jobs and inventory",
+      "item": [
+        { "name": "Get job", "request": { "method": "GET", "url": "{{api_base_url}}/jobs/{{job_id}}", "description": "Permission: job:read. Poll after a validation or discovery request. Terminal status is succeeded or failed." } },
+        { "name": "List resources", "request": { "method": "GET", "url": "{{api_base_url}}/resources?limit=50", "description": "Permission: resource:read. Response includes data and a signed nextCursor; send it back unchanged as ?cursor=... for the next page." } },
+        {
+          "name": "Create resource",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{idempotency_key}}" }], "url": "{{api_base_url}}/resources", "description": "Permission: resource:write. monitoringConnectionId and monitoringSelector must either both be supplied or both be null.", "body": { "mode": "raw", "raw": "{\n  \"providerId\": \"host-prod-01\",\n  \"resourceType\": \"linux_host\",\n  \"name\": \"Production API host\",\n  \"environment\": \"production\",\n  \"criticality\": \"high\",\n  \"dataClassification\": \"restricted\",\n  \"monitoringConnectionId\": null,\n  \"monitoringSelector\": null,\n  \"tags\": { \"service\": \"api\" },\n  \"source\": \"manual\"\n}" } }
+        }
+      ]
+    },
+    {
+      "name": "3. Analytics dashboard",
+      "description": "Use these calls to populate charts, KPI cards, incident lists, and audit views. Keep report and metric windows within their documented bounds.",
+      "item": [
+        {
+          "name": "Operations report",
+          "request": { "method": "GET", "url": "{{api_base_url}}/reports/operations?start={{report_start}}&end={{report_end}}", "description": "Permission: report:read. Maximum range: 90 days. Suitable for overview KPI cards and incident/alert breakdowns." },
+          "response": [{ "name": "200 — operations analytics", "originalRequest": { "method": "GET", "url": "{{api_base_url}}/reports/operations?start={{report_start}}&end={{report_end}}" }, "status": "OK", "code": 200, "_postman_previewlanguage": "json", "body": "{\n  \"data\": {\n    \"period\": { \"start\": \"2026-09-01T00:00:00.000Z\", \"end\": \"2026-09-02T00:00:00.000Z\" },\n    \"alerts\": [{ \"severity\": \"critical\", \"status\": \"firing\", \"count\": 2 }],\n    \"incidents\": [{ \"severity\": \"critical\", \"status\": \"open\", \"count\": 1 }],\n    \"serviceLevels\": { \"acknowledgedCount\": 3, \"resolvedCount\": 2, \"meanTimeToAcknowledgeSeconds\": 120, \"meanTimeToResolveSeconds\": 900 },\n    \"currentlyActiveIncidents\": 1\n  },\n  \"requestId\": \"13f1ae6c-5151-4f8c-8616-908e62f27c71\"\n}" }]
+        },
+        {
+          "name": "Query approved metric template",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{api_base_url}}/metrics/query", "description": "Permission: metrics:read. The API accepts approved templates only, not arbitrary PromQL. Maximum range: 24 hours and 2,000 points.", "body": { "mode": "raw", "raw": "{\n  \"resourceId\": \"{{resource_id}}\",\n  \"queryId\": \"host.cpu.utilization\",\n  \"start\": \"2026-09-01T00:00:00.000Z\",\n  \"end\": \"2026-09-01T01:00:00.000Z\",\n  \"stepSeconds\": 60\n}" } }
+        },
+        { "name": "List alerts", "request": { "method": "GET", "url": "{{api_base_url}}/alerts?limit=50", "description": "Permission: alert:read." } },
+        { "name": "List incidents", "request": { "method": "GET", "url": "{{api_base_url}}/incidents?limit=50", "description": "Permission: incident:read. Use version from the returned incident when acknowledging or resolving." } },
+        {
+          "name": "Acknowledge incident",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{idempotency_key}}" }], "url": "{{api_base_url}}/incidents/{{incident_id}}/acknowledge", "description": "Permission: incident:write. version is required for optimistic concurrency; a stale version returns 409.", "body": { "mode": "raw", "raw": "{ \"version\": 1, \"assignee\": \"on-call@example.com\" }" } }
+        },
+        {
+          "name": "Resolve incident",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{idempotency_key}}" }], "url": "{{api_base_url}}/incidents/{{incident_id}}/resolve", "description": "Permission: incident:write. version and a concise resolution are required.", "body": { "mode": "raw", "raw": "{ \"version\": 2, \"resolution\": \"Service restored; monitoring confirms normal operation.\" }" } }
+        },
+        { "name": "List audit evidence", "request": { "method": "GET", "url": "{{api_base_url}}/audit-events?limit=50", "description": "Permission: audit:read. Audit records are tenant-scoped and include integrity-chain fields. Render details defensively; they are evidence metadata, not HTML." } }
+      ]
+    },
+    {
+      "name": "4. Platform administration",
+      "description": "Platform administration is deliberately separate from customer access. A token with platform:admin cannot be combined with customer permissions.",
+      "item": [
+        { "name": "Create customer", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "url": "{{api_base_url}}/platform/customers", "description": "Permission: platform:admin.", "body": { "mode": "raw", "raw": "{ \"name\": \"Example Customer\" }" } } },
+        { "name": "Revoke current session", "request": { "method": "POST", "url": "{{api_base_url}}/sessions/current/revoke", "description": "Revokes the access-token session represented by access_token. Expected 204; clear browser auth state after success." } }
+      ]
+    },
+    {
+      "name": "5. Alertmanager webhook (service-to-service)",
+      "description": "Not a browser endpoint. It is included for end-to-end testing only. Do not expose its signing key to the frontend; it uses its own HMAC headers and no OIDC bearer token.",
+      "item": [
+        { "name": "Ingest signed Alertmanager delivery", "request": { "method": "POST", "auth": { "type": "noauth" }, "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-MetricOps-Timestamp", "value": "REPLACE_WITH_UNIX_SECONDS" }, { "key": "X-MetricOps-Nonce", "value": "REPLACE_WITH_UUID" }, { "key": "X-MetricOps-Signature", "value": "REPLACE_WITH_v1_HMAC_SHA256" }], "url": "{{api_base_url}}/webhooks/alertmanager/{{customer_id}}/{{connection_id}}", "description": "Requires a valid HMAC over exact raw JSON bytes. See docs/guides/INTEGRATIONS.md; this request cannot succeed with placeholder headers.", "body": { "mode": "raw", "raw": "{\n  \"version\": \"4\",\n  \"status\": \"firing\",\n  \"receiver\": \"metricops\",\n  \"alerts\": [{\n    \"status\": \"firing\",\n    \"labels\": { \"alertname\": \"HostDown\", \"severity\": \"critical\" },\n    \"annotations\": { \"summary\": \"Host is unavailable\" },\n    \"startsAt\": \"2026-09-01T12:00:00.000Z\",\n    \"fingerprint\": \"abcdef0123456789\"\n  }]\n}" } } }
+      ]
+    }
+  ]
+}

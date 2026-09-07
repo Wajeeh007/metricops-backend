@@ -1,0 +1,14 @@
+.git
+.agents
+.codex
+node_modules
+dist
+docs
+presentation
+secrets
+backups
+*.docx
+*.pptx
+*.pdf
+*.log
+.env*

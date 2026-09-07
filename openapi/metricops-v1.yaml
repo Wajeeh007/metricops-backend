@@ -1,0 +1,488 @@
+openapi: 3.1.0
+info:
+  title: MetricOps Control Plane API
+  version: 0.1.0
+  description: Secure tenant-scoped API for MetricOps connections and platform provisioning.
+servers:
+  - url: https://metricops.example.gov/api/v1
+security:
+  - oidc: []
+paths:
+  /connections:
+    get:
+      summary: List connections for the authenticated customer
+      operationId: listConnections
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Tenant-scoped connection list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, requestId]
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Connection" } }
+                  requestId: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Register a supported connection
+      operationId: createConnection
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateConnection" }
+      responses:
+        "201":
+          description: Connection registered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, requestId]
+                properties:
+                  data: { $ref: "#/components/schemas/Connection" }
+                  requestId: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /connections/{connectionId}/validation-jobs:
+    post:
+      summary: Queue a durable connection-validation job
+      operationId: enqueueConnectionValidation
+      parameters:
+        - in: path
+          name: connectionId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202": { description: Job queued or existing idempotent job returned }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /connections/{connectionId}/discovery-jobs:
+    post:
+      summary: Queue durable AWS inventory discovery
+      operationId: enqueueAwsDiscovery
+      parameters:
+        - { in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "202": { description: Discovery job queued or existing idempotent job returned }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /jobs/{jobId}:
+    get:
+      summary: Read tenant-scoped job status
+      operationId: getJob
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Current job state and safe result }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /resources:
+    get:
+      summary: List tenant-scoped inventory using a signed cursor
+      operationId: listResources
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { in: query, name: cursor, schema: { type: string, maxLength: 500 } }
+      responses:
+        "200": { description: Resource page and next cursor }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Register a tenant-owned resource
+      operationId: createResource
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateResource" }
+      responses:
+        "201": { description: Resource registered }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /metrics/query:
+    post:
+      summary: Execute a policy-bounded approved metrics template
+      operationId: queryMetrics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MetricsQuery" }
+      responses:
+        "200": { description: Normalized bounded metric series }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "424": { $ref: "#/components/responses/Error" }
+  /webhooks/alertmanager/{customerId}/{connectionId}:
+    post:
+      security: []
+      summary: Accept a signed Alertmanager webhook delivery
+      operationId: ingestAlertmanagerWebhook
+      parameters:
+        - { in: path, name: customerId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-MetricOps-Timestamp, required: true, schema: { type: integer } }
+        - { in: header, name: X-MetricOps-Nonce, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-MetricOps-Signature, required: true, schema: { type: string, pattern: "^v1=[A-Fa-f0-9]{64}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertmanagerWebhook" }
+      responses:
+        "202": { description: Delivery authenticated and processed }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /alerts:
+    get:
+      summary: List alerts for the authenticated customer
+      operationId: listAlerts
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: Tenant-scoped alert list }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /incidents:
+    get:
+      summary: List incidents for the authenticated customer
+      operationId: listIncidents
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: Tenant-scoped incident list }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /incidents/{incidentId}/acknowledge:
+    post:
+      summary: Acknowledge an open incident using optimistic concurrency
+      operationId: acknowledgeIncident
+      parameters:
+        - { in: path, name: incidentId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcknowledgeIncident" }
+      responses:
+        "200": { description: Incident acknowledged }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /incidents/{incidentId}/resolve:
+    post:
+      summary: Resolve an active incident using optimistic concurrency
+      operationId: resolveIncident
+      parameters:
+        - { in: path, name: incidentId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResolveIncident" }
+      responses:
+        "200": { description: Incident resolved }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /reports/operations:
+    get:
+      summary: Generate a bounded tenant operational report
+      operationId: generateOperationsReport
+      parameters:
+        - { in: query, name: start, required: true, schema: { type: string, format: date-time } }
+        - { in: query, name: end, required: true, schema: { type: string, format: date-time } }
+      responses:
+        "200": { description: Alert counts, incident counts, and response-time aggregates for a range up to 90 days }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /audit-events:
+    get:
+      summary: List integrity-linked audit evidence for the authenticated customer
+      operationId: listAuditEvents
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200":
+          description: Most recent tenant-scoped audit events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, requestId]
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } }
+                  requestId: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /platform/customers:
+    post:
+      summary: Provision a customer
+      operationId: createCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201": { description: Customer provisioned }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /sessions/current/revoke:
+    post:
+      summary: Immediately revoke the current access-token session
+      operationId: revokeCurrentSession
+      responses:
+        "204": { description: Session revoked }
+        "401": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://identity.example.gov/realms/metricops/.well-known/openid-configuration
+  responses:
+    Error:
+      description: Stable, non-sensitive API error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    CreateConnection:
+      oneOf:
+        - $ref: "#/components/schemas/CreatePostgresConnection"
+        - $ref: "#/components/schemas/CreateMysqlConnection"
+        - $ref: "#/components/schemas/CreatePrometheusConnection"
+        - $ref: "#/components/schemas/CreateAlertmanagerConnection"
+        - $ref: "#/components/schemas/CreateAwsConnection"
+      discriminator:
+        propertyName: kind
+    CreatePostgresConnection:
+      type: object
+      additionalProperties: false
+      required: [name, kind, configuration, secretRef]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        kind: { const: postgresql }
+        configuration:
+          type: object
+          additionalProperties: false
+          required: [host, port, database, sslMode]
+          properties:
+            host: { type: string, minLength: 1, maxLength: 253 }
+            port: { type: integer, minimum: 1, maximum: 65535, default: 5432 }
+            database: { type: string, minLength: 1, maxLength: 63 }
+            sslMode: { const: verify-full }
+        secretRef: { type: string, pattern: "^file:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" }
+    CreateMysqlConnection:
+      type: object
+      additionalProperties: false
+      required: [name, kind, configuration, secretRef]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        kind: { const: mysql }
+        configuration:
+          type: object
+          additionalProperties: false
+          required: [host, port, database, sslMode]
+          properties:
+            host: { type: string, minLength: 1, maxLength: 253 }
+            port: { type: integer, minimum: 1, maximum: 65535, default: 3306 }
+            database: { type: string, minLength: 1, maxLength: 64 }
+            sslMode: { const: verify_identity }
+        secretRef: { type: string, pattern: "^file:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" }
+    CreatePrometheusConnection:
+      type: object
+      additionalProperties: false
+      required: [name, kind, configuration, secretRef]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        kind: { const: prometheus }
+        configuration:
+          type: object
+          additionalProperties: false
+          required: [baseUrl, healthPath]
+          properties:
+            baseUrl: { type: string, format: uri, pattern: "^https://" }
+            healthPath: { type: string, pattern: "^/[A-Za-z0-9/_-]{1,128}$", default: "/-/ready" }
+        secretRef:
+          oneOf:
+            - { type: string, pattern: "^file:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" }
+            - { type: "null" }
+    CreateAlertmanagerConnection:
+      type: object
+      additionalProperties: false
+      required: [name, kind, configuration, secretRef]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        kind: { const: alertmanager_webhook }
+        configuration:
+          type: object
+          additionalProperties: false
+          required: [sourceName]
+          properties:
+            sourceName: { type: string, minLength: 1, maxLength: 120 }
+        secretRef: { type: string, pattern: "^file:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" }
+    CreateAwsConnection:
+      type: object
+      additionalProperties: false
+      required: [name, kind, configuration, secretRef]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        kind: { const: aws_assume_role }
+        configuration:
+          type: object
+          additionalProperties: false
+          required: [roleArn, externalId, regions, resourceTypes, maxResources]
+          properties:
+            roleArn: { type: string, pattern: "^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/" }
+            externalId: { type: string, minLength: 16, maxLength: 128 }
+            regions: { type: array, minItems: 1, maxItems: 20, uniqueItems: true, items: { type: string, pattern: "^[a-z]{2}(-gov)?-[a-z]+-[0-9]$" } }
+            resourceTypes: { type: array, minItems: 1, maxItems: 4, uniqueItems: true, items: { enum: [aws_ec2, aws_ebs, aws_rds, aws_load_balancer] } }
+            maxResources: { type: integer, minimum: 1, maximum: 5000, default: 1000 }
+        secretRef: { type: "null" }
+    Connection:
+      type: object
+      required: [id, name, kind, configuration, status, lastValidatedAt, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { enum: [postgresql, mysql, prometheus, alertmanager_webhook, aws_assume_role] }
+        configuration: { type: object }
+        status: { enum: [pending, healthy, unhealthy, disabled] }
+        lastValidatedAt: { oneOf: [{ type: string, format: date-time }, { type: "null" }] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateResource:
+      type: object
+      additionalProperties: false
+      required: [providerId, resourceType, name, environment, criticality, dataClassification, monitoringConnectionId, monitoringSelector, tags, source]
+      properties:
+        providerId: { type: string, minLength: 1, maxLength: 300 }
+        resourceType: { enum: [linux_host, application_endpoint, database_instance, aws_ec2, aws_ebs, aws_rds, aws_load_balancer] }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        environment: { type: string, minLength: 1, maxLength: 100 }
+        criticality: { enum: [low, medium, high, critical] }
+        dataClassification: { enum: [public, internal, confidential, restricted] }
+        monitoringConnectionId: { oneOf: [{ type: string, format: uuid }, { type: "null" }] }
+        monitoringSelector: { oneOf: [{ type: string, pattern: "^[A-Za-z0-9._:-]{1,253}$" }, { type: "null" }] }
+        tags: { type: object, maxProperties: 32, additionalProperties: { type: string, maxLength: 120 } }
+        source: { type: string, pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,99}$" }
+    MetricsQuery:
+      type: object
+      additionalProperties: false
+      required: [resourceId, queryId, start, end, stepSeconds]
+      properties:
+        resourceId: { type: string, format: uuid }
+        queryId: { enum: [host.up, host.cpu.utilization, host.memory.utilization] }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        stepSeconds: { type: integer, minimum: 15, maximum: 3600 }
+    AlertmanagerWebhook:
+      type: object
+      required: [version, status, receiver, alerts]
+      properties:
+        version: { type: string, maxLength: 20 }
+        status: { enum: [firing, resolved] }
+        receiver: { type: string, maxLength: 200 }
+        alerts:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            required: [status, labels, startsAt, fingerprint]
+            properties:
+              status: { enum: [firing, resolved] }
+              labels: { type: object, maxProperties: 64, additionalProperties: { type: string, maxLength: 500 } }
+              annotations: { type: object, maxProperties: 64, additionalProperties: { type: string, maxLength: 2000 } }
+              startsAt: { type: string, format: date-time }
+              endsAt: { type: string, format: date-time }
+              fingerprint: { type: string, pattern: "^[A-Fa-f0-9]{1,64}$" }
+    AcknowledgeIncident:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        assignee: { type: string, minLength: 1, maxLength: 200 }
+    ResolveIncident:
+      type: object
+      additionalProperties: false
+      required: [version, resolution]
+      properties:
+        version: { type: integer, minimum: 1 }
+        resolution: { type: string, minLength: 1, maxLength: 4000 }
+    AuditEvent:
+      type: object
+      required: [sequence, id, actorId, action, resourceType, resourceId, requestId, occurredAt, details, previousHash, chainHash]
+      properties:
+        sequence: { type: string, pattern: "^[0-9]+$" }
+        id: { type: string, format: uuid }
+        actorId: { type: string }
+        action: { type: string }
+        resourceType: { type: string }
+        resourceId: { type: string }
+        requestId: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        details: { type: object }
+        previousHash: { oneOf: [{ type: string, pattern: "^[a-f0-9]{64}$" }, { type: "null" }] }
+        chainHash: { type: string, pattern: "^[a-f0-9]{64}$" }
+    Error:
+      type: object
+      required: [error, requestId]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requestId: { type: string, format: uuid }

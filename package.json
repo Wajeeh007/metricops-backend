@@ -1,0 +1,50 @@
+{
+  "name": "metricops-control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "start": "node --enable-source-maps dist/src/main.js",
+    "worker": "node --enable-source-maps dist/src/worker.js",
+    "dev": "tsx watch src/main.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:integration": "node --import tsx --test test/integration/**/*.test.ts",
+    "db:migrate": "tsx src/database/migrate.ts",
+    "backup:create": "tsx src/operations/backup.ts",
+    "backup:restore-drill": "tsx src/operations/restore-drill.ts",
+    "audit:verify": "tsx src/operations/verify-audit.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.1126.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.1126.0",
+    "@aws-sdk/client-rds": "^3.1126.0",
+    "@aws-sdk/client-sts": "^3.1126.0",
+    "@aws-sdk/types": "^3.974.5",
+    "@prometheus-io/client": "^0.16.1",
+    "@smithy/node-http-handler": "^4.12.1",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "jose": "^6.1.0",
+    "mysql2": "^3.24.3",
+    "pg": "^8.16.3",
+    "pino-http": "^10.5.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.18.1",
+    "@types/pg": "^8.15.5",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.4",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,0 +1,74 @@
+name: backend-security-gates
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: metricops_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: integration-admin-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d metricops_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run build
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+      - name: Create restricted integration roles
+        env:
+          PGPASSWORD: integration-admin-password
+        run: |
+          psql -h 127.0.0.1 -U postgres -d metricops_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE metricops_app LOGIN PASSWORD 'integration-app-password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+          CREATE ROLE metricops_worker LOGIN PASSWORD 'integration-worker-password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+          SQL
+      - name: Apply migrations
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgres://postgres:integration-admin-password@127.0.0.1:5432/metricops_test
+          DATABASE_SSL_MODE: disable
+          OIDC_ISSUER: https://identity.example.test
+          OIDC_AUDIENCE: metricops-api
+          OIDC_JWKS_URI: https://identity.example.test/jwks
+          CORS_ORIGINS: https://console.example.test
+          AUDIT_HMAC_KEY: 01234567890123456789012345678901
+        run: npm run db:migrate
+      - name: Test live tenant and worker boundaries
+        env:
+          TEST_DATABASE_ADMIN_URL: postgres://postgres:integration-admin-password@127.0.0.1:5432/metricops_test
+          TEST_DATABASE_APP_URL: postgres://metricops_app:integration-app-password@127.0.0.1:5432/metricops_test
+          TEST_DATABASE_WORKER_URL: postgres://metricops_worker:integration-worker-password@127.0.0.1:5432/metricops_test
+        run: npm run test:integration
+      - name: Validate Compose model
+        env:
+          OIDC_ISSUER: https://identity.example.test
+          OIDC_JWKS_URI: https://identity.example.test/jwks
+          CORS_ORIGINS: https://console.example.test
+        run: docker compose config --quiet
+      - run: docker build --pull --tag metricops-control-plane:ci .
